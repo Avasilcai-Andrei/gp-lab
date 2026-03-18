@@ -190,14 +190,26 @@ function SingleTelemetry() {
 function LapTimePanel({ year, gp, driver, session }) {
   const [lapData, setLapData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const fetch_ = async () => {
     setLoading(true);
+    setError(""); 
     try {
       const res = await fetch(`${API}/telemetry/lap-times?year=${year}&gp=${encodeURIComponent(gp)}&driver=${driver}&session=${session}`);
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to load stint data.");
+      }
+      
       const json = await res.json();
       setLapData(json);
-    } catch (e) {} finally { setLoading(false); }
+    } catch (e) {
+      setError(e.message);
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const COMPOUND_COLORS = {
@@ -213,7 +225,10 @@ function LapTimePanel({ year, gp, driver, session }) {
           {loading ? "..." : "Load Stint"}
         </button>
       </div>
-      {lapData && (
+
+      {error && <div className="error-msg" style={{ marginBottom: "1rem" }}>⚠ {error}</div>}
+
+      {lapData && !error && (
         <ResponsiveContainer width="100%" height={180}>
           <LineChart data={lapData} margin={{ top: 4, right: 20, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" />

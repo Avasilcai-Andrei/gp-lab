@@ -67,7 +67,7 @@ CIRCUIT_ALIASES = {
     "azerbaijan grand prix": "Baku",
     "singapore grand prix": "Singapore",
     "united states grand prix": "COTA",
-    "mexico city grand prix": "COTA",
+    "mexico city grand prix": "Mexico",
     "são paulo grand prix": "Interlagos",
     "sao paulo grand prix": "Interlagos",
     "las vegas grand prix": "LasVegas",
@@ -92,7 +92,7 @@ CIRCUIT_ALIASES = {
     "baku": "Baku", "azerbaijan": "Baku",
     "singapore": "Singapore",
     "cota": "COTA", "texas": "COTA", "austin": "COTA", "americas": "COTA",
-    "mexico": "COTA",
+    "mexico": "Mexico", "mexico city": "Mexico",
     "brazil": "Interlagos", "interlagos": "Interlagos",
     "vegas": "LasVegas", "las vegas": "LasVegas",
     "qatar": "Losail", "losail": "Losail",
@@ -118,31 +118,36 @@ def get_circuit_features(grand_prix: str) -> dict:
 def collect_training_data(years: list[int]) -> pd.DataFrame:
     records = []
     for year in years:
-        schedule = fastf1.get_event_schedule(year, include_testing=False)
-        for _, event in schedule.iterrows():
-            try:
-                race = fastf1.get_session(year, event["EventName"], "R")
-                race.load(telemetry=False, weather=False, messages=False, laps=False)
-                
-                # Use actual Race Results for Ground Truth and Starting Grid
-                results = race.results
-                gp_name = event["EventName"]
+        try:
+            schedule = fastf1.get_event_schedule(year, include_testing=False)
+            for _, event in schedule.iterrows():
+                try:
+                    race = fastf1.get_session(year, event["EventName"], "R")
+                    race.load(telemetry=False, weather=False, messages=False, laps=False)
+                    
+                    # Use actual Race Results for Ground Truth and Starting Grid
+                    results = race.results
+                    gp_name = event["EventName"]
 
-                for _, row in results.iterrows():
-                    records.append({
-                        "year": year,
-                        "round": int(event.get("RoundNumber", 0)),
-                        "grand_prix": gp_name,
-                        "driver": row["Abbreviation"],
-                        "team": row.get("TeamName", "Unknown"),
-                        "grid_position": int(row["GridPosition"]), # Corrected: Real starting position
-                        "finish_position": int(row["Position"]) if pd.notna(row["Position"]) else 20,
-                        "points": float(row["Points"]) if pd.notna(row["Points"]) else 0,
-                        "status": row.get("Status", "Finished"),
-                    })
-            except Exception as e:
-                print(f"Fetch error {year} {event['EventName']}: {str(e)[:50]}")
-                continue
+                    for _, row in results.iterrows():
+                        records.append({
+                            "year": year,
+                            "round": int(event.get("RoundNumber", 0)),
+                            "grand_prix": gp_name,
+                            "driver": row["Abbreviation"],
+                            "team": row.get("TeamName", "Unknown"),
+                            "grid_position": int(row["GridPosition"]), # Corrected: Real starting position
+                            "finish_position": int(row["Position"]) if pd.notna(row["Position"]) else 20,
+                            "points": float(row["Points"]) if pd.notna(row["Points"]) else 0,
+                            "status": row.get("Status", "Finished"),
+                        })
+                except Exception as e:
+                    print(f"Fetch error {year} {event['EventName']}: {str(e)[:50]}")
+                    continue
+        except Exception as e:
+            print(f"Schedule fetch error for {year}: {str(e)[:50]}")
+            continue
+            
     return pd.DataFrame(records)
 
 
@@ -209,11 +214,9 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 # ─── Model Training ───────────────────────────────────────────────────────────
 
 def train_model(years: list[int] = [2022, 2023, 2024, 2025, 2026]):
-    try:
-        from xgboost import XGBRegressor
-    except ImportError:
-        from sklearn.ensemble import GradientBoostingRegressor as XGBRegressor
 
+    from xgboost import XGBRegressor
+    
     print("Collecting training data...")
     df = collect_training_data(years)
     df = engineer_features(df)

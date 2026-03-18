@@ -23,6 +23,8 @@ def get_driver_lap_telemetry(year: int, grand_prix: str, session_type: str, driv
     """
     session = get_session(year, grand_prix, session_type)
     laps = session.laps.pick_driver(driver)
+    if laps.empty:
+        raise ValueError(f"No lap data found for driver {driver} in this session.")
 
     lap = laps[laps["LapNumber"] == lap_number].iloc[0]
     tel = lap.get_telemetry().add_distance()
@@ -84,14 +86,24 @@ def compare_laps(year: int, grand_prix: str, session_type: str,
 def get_fastest_lap_telemetry(year: int, grand_prix: str, session_type: str, driver: str):
     """Get telemetry for a driver's fastest lap in the session."""
     session = get_session(year, grand_prix, session_type)
-    laps = session.laps.pick_driver(driver).pick_fastest()
-    tel = laps.get_telemetry().add_distance()
+    
+    driver_laps = session.laps.pick_driver(driver)
+    
+    if driver_laps.empty:
+        raise ValueError(f"No lap data found for driver {driver} in this session.")
+        
+    fastest_lap = driver_laps.pick_fastest()
+    
+    if pd.isna(fastest_lap['LapTime']):
+        raise ValueError(f"Driver {driver} did not set a valid lap time in this session.")
+        
+    tel = fastest_lap.get_telemetry().add_distance()
 
     return {
         "driver": driver,
-        "lap_number": int(laps["LapNumber"]),
-        "lap_time": str(laps["LapTime"]),
-        "compound": laps.get("Compound", "Unknown"),
+        "lap_number": int(fastest_lap["LapNumber"]),
+        "lap_time": str(fastest_lap["LapTime"]),
+        "compound": fastest_lap.get("Compound", "Unknown"),
         "telemetry": {
             "distance": tel["Distance"].tolist(),
             "speed": tel["Speed"].tolist(),
@@ -104,7 +116,6 @@ def get_fastest_lap_telemetry(year: int, grand_prix: str, session_type: str, dri
             "y": tel["Y"].tolist(),
         }
     }
-
 
 def get_session_drivers(year: int, grand_prix: str, session_type: str):
     """List all drivers in a session."""
