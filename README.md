@@ -42,7 +42,7 @@ The prediction engine uses an **XGBoost Regressor** with custom sample weighting
 
 - **Frontend:** React 18, Vite, Recharts (Customized for dark-mode performance data)
 - **Backend:** Python 3.10+, FastAPI, Uvicorn
-- **Data/ML:** XGBoost, Scikit-Learn, Pandas, FastF1
+- **Data/ML:** XGBoost, Pandas, FastF1
 - **Styling:** CSS3 (Bebas Neue & IBM Plex Mono for a "pit wall" aesthetic)
 
 ---

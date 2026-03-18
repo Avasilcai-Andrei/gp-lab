@@ -61,8 +61,8 @@ export default function PredictorView() {
   const [training, setTraining] = useState(false);
   const [trainYears, setTrainYears] = useState("2022,2023,2024,2025,2026");
 
-  const updateDriver = (i, field, val) => {
-    setGrid(g => g.map((d, idx) => idx === i ? { ...d, [field]: field === "grid" ? parseInt(val) || idx + 1 : val } : d));
+  const updateDriver = (entryToUpdate, field, val) => {
+    setGrid(g => g.map(d => d === entryToUpdate ? { ...d, [field]: field === "grid" ? parseInt(val) || d.grid : val } : d));
   };
 
   const predict = async () => {
@@ -107,7 +107,6 @@ export default function PredictorView() {
       <div className="section-title">Race Predictor</div>
       <div className="section-subtitle">ml model · grid-based prediction · driver form · team performance</div>
 
-      {/* Session + Model controls */}
       <div style={{ display: "flex", gap: "1rem", marginBottom: "1.5rem", flexWrap: "wrap", alignItems: "flex-end" }}>
         <div className="control-group">
           <span className="control-label">Season</span>
@@ -121,7 +120,6 @@ export default function PredictorView() {
           {loading ? "Predicting..." : "▶ Run Prediction"}
         </button>
         <div style={{ flex: 1 }} />
-        {/* ML training section */}
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
           <div className="control-group">
             <span className="control-label">Train on years</span>
@@ -147,7 +145,6 @@ export default function PredictorView() {
       {error && <div className="error-msg">⚠ {error}</div>}
 
       <div className="grid-2" style={{ gap: "1.5rem" }}>
-        {/* Grid editor */}
         <div className="card">
           <div className="card-title">Qualifying Grid</div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
@@ -168,13 +165,13 @@ export default function PredictorView() {
                   className="control-input"
                   style={{ width: "55px", padding: "0.3rem 0.5rem", fontSize: "0.8rem" }}
                   value={entry.driver}
-                  onChange={e => updateDriver(i, "driver", e.target.value)}
+                  onChange={e => updateDriver(entry, "driver", e.target.value)}
                 />
                 <input
                   className="control-input"
                   style={{ flex: 1, padding: "0.3rem 0.5rem", fontSize: "0.75rem" }}
                   value={entry.team}
-                  onChange={e => updateDriver(i, "team", e.target.value)}
+                  onChange={e => updateDriver(entry, "team", e.target.value)}
                 />
                 <div style={{
                   width: 10, height: 10, borderRadius: "50%",
@@ -193,7 +190,6 @@ export default function PredictorView() {
           </button>
         </div>
 
-        {/* Results */}
         <div>
           {results ? (
             <>
@@ -233,7 +229,6 @@ export default function PredictorView() {
                 </table>
               </div>
 
-              {/* Podium probability bar chart */}
               <div className="card">
                 <div className="card-title">Podium Probability — Top 5</div>
                 <ResponsiveContainer width="100%" height={180}>

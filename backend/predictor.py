@@ -45,6 +45,7 @@ CIRCUIT_FEATURES = {
     "COTA":         {"street": 0, "overtaking": 0.6,  "power_dep": 0.65,"downforce_dep": 0.8,  "tire_deg": 0.7},
     "AbuDhabi":     {"street": 0, "overtaking": 0.45, "power_dep": 0.7, "downforce_dep": 0.75, "tire_deg": 0.5},
     "Shanghai":     {"street": 0, "overtaking": 0.55, "power_dep": 0.65,"downforce_dep": 0.75, "tire_deg": 0.75},
+    "Mexico":       {"street": 0, "overtaking": 0.4,  "power_dep": 0.5, "downforce_dep": 0.95, "tire_deg": 0.5},
 }
 
 CIRCUIT_ALIASES = {

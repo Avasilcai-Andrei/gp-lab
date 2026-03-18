@@ -26,7 +26,11 @@ def get_driver_lap_telemetry(year: int, grand_prix: str, session_type: str, driv
     if laps.empty:
         raise ValueError(f"No lap data found for driver {driver} in this session.")
 
-    lap = laps[laps["LapNumber"] == lap_number].iloc[0]
+    target_lap = laps[laps["LapNumber"] == lap_number]
+    if target_lap.empty:
+        raise ValueError(f"Lap {lap_number} not found for driver {driver}.")
+    
+    lap = target_lap.iloc[0]
     tel = lap.get_telemetry().add_distance()
 
     result = {
@@ -59,7 +63,10 @@ def compare_laps(year: int, grand_prix: str, session_type: str,
 
     def extract(driver, lap_number):
         laps = session.laps.pick_driver(driver)
-        lap = laps[laps["LapNumber"] == lap_number].iloc[0]
+        target_lap = laps[laps["LapNumber"] == lap_number]
+        if target_lap.empty:
+            raise ValueError(f"Lap {lap_number} not found for driver {driver}.")
+        lap = target_lap.iloc[0]
         tel = lap.get_telemetry().add_distance()
         return {
             "driver": driver,
