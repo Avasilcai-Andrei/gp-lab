@@ -1,194 +1,68 @@
-# 🏎️ F1 Lab — Telemetry & Race Predictor
+# 🏁 GP Lab — Grand Prix Telemetry & ML Predictor
 
-A full-stack F1 data app built with **FastF1**, **FastAPI**, **React**, and **XGBoost**. Load real telemetry data from any F1 session, compare drivers lap-by-lap, and predict race finishing orders using a machine learning model trained on historical results.
+GP Lab is a full-stack performance analysis tool for Formula racing. It combines real-time telemetry visualization with a Gradient Boosting model to predict race outcomes based on historical trends, driver form, and circuit characteristics.
 
----
-
-## Features
-
-### Telemetry Viewer
-- Load any driver's fastest lap from any session (Race, Qualifying, FP1/2/3)
-- Charts: Speed, Throttle, Brake, RPM, Gear vs. Distance
-- Toggle channels on/off with colored buttons
-- Lap time evolution chart with tyre compound coloring (soft/medium/hard/inter/wet)
-- **Driver comparison mode** — overlay two drivers with interpolated delta trace
-- Data sourced live from FastF1 and cached locally
-
-### Race Predictor
-- Edit a full qualifying grid in the UI
-- Predict finishing order using XGBoost trained on real historical F1 data
-- Features used: grid position, driver form (recency-weighted rolling avg), team form, DNF rate, regulation era flag
-- Soft probability distribution — podium % and points % across the full field
-- Train the model directly from the UI on any range of seasons
-- Per-driver form nudge (-5 to +5) to apply domain knowledge on top of the model
+> **Disclaimer:** This project is an independent educational tool and is not affiliated with, sponsored by, or endorsed by the Formula 1 companies. F1, FORMULA ONE, and related marks are trademarks of Formula One Licensing B.V.
 
 ---
 
-## Tech Stack
+## 🚀 Key Features
 
-| Layer | Technology |
-|---|---|
-| Data | FastF1 (real F1 telemetry + session results) |
-| Backend | Python, FastAPI, Uvicorn |
-| ML | XGBoost, scikit-learn, pandas, numpy |
-| Frontend | React, Vite, Recharts |
-| Communication | REST API (JSON) |
+### 1. Advanced Telemetry Analytics
+- **Multi-Channel Visualization:** Real-time speed, throttle, brake, RPM, and gear data synchronized across distance.
+- **Delta Comparison Mode:** Overlay two drivers to visualize time lost/gained through corners using interpolated trace data.
+- **Stint Evolution:** Track lap time degradation with automated tyre compound detection.
 
----
-
-## Project Structure
-
-```
-f1-lab/
-├── backend/
-│   ├── main.py           # FastAPI server + all endpoints
-│   ├── telemetry.py      # FastF1 data fetching & processing
-│   ├── predictor.py      # ML model training & inference
-│   ├── models/           # Saved .pkl model (auto-created, gitignored)
-│   ├── f1_cache/         # FastF1 data cache (auto-created, gitignored)
-│   └── requirements.txt
-└── frontend/
-    ├── src/
-    │   ├── main.jsx
-    │   ├── App.jsx
-    │   ├── App.css
-    │   └── components/
-    │       ├── TelemetryView.jsx
-    │       └── PredictorView.jsx
-    ├── index.html
-    ├── package.json
-    └── vite.config.js
-```
+### 2. ML Race Predictor
+- **Dynamic Grid Engine:** Interactive UI to set the starting grid and run simulations.
+- **Feature Engineering:** Uses recency-weighted form, team-based performance baselines, and circuit-specific "affinity" scores.
+- **Probabilistic Outcomes:** Uses a modified Softmax decay to calculate podium and points probabilities across the field.
 
 ---
 
-## Setup
+## 🛠️ Technical Implementation (Deep Dive)
 
-### Prerequisites
-- Python 3.10+
-- Node.js 18+
+### Machine Learning Architecture
+The prediction engine uses an **XGBoost Regressor** with custom sample weighting. 
 
-### 1. Backend
+- **Time-Decay Weighting:** To account for the rapid evolution of car development, training data is weighted using an exponential decay function: 
+  $$W_i = e^{0.015 \cdot (Index_i - Index_{max})}$$
+  This ensures that the model prioritizes recent performance while still learning from historical data.
+- **Cold-Start Mitigation:** For rookies or drivers new to a team (e.g., 2026 scenarios), the model implements a hierarchical fallback: 
+  `Driver Form` → `Team Baseline` → `Grid Position`.
+- **Circuit Characteristics:** Instead of just treating every track the same, the model ingests a "Circuit Fingerprint" (Street vs. Permanent, Overtaking Difficulty, Power Dependency, and Tyre Degradation).
 
-```bash
-cd backend
-python -m venv venv
-
-# Windows:
-venv\Scripts\activate
-# Mac/Linux:
-source venv/bin/activate
-
-pip install -r requirements.txt
-python main.py
-```
-
-Backend runs at **http://localhost:8000**
-Interactive API docs at **http://localhost:8000/docs**
-
-### 2. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend runs at **http://localhost:5173**
+### Data Pipeline
+- **FastF1 Integration:** Automated fetching and local caching of telemetry and session results.
+- **Grid Correction:** Unlike basic predictors that use Qualifying results, this tool pulls the **actual starting grid** from the race session to account for post-qualifying penalties and pit-lane starts.
 
 ---
 
-## API Endpoints
+## 💻 Tech Stack
 
-### Telemetry
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/telemetry/fastest-lap` | Fastest lap telemetry for a driver |
-| GET | `/telemetry/lap` | Telemetry for a specific lap number |
-| GET | `/telemetry/compare` | Compare two drivers on the same chart |
-| GET | `/telemetry/lap-times` | Full stint lap time data |
-| GET | `/telemetry/drivers` | List all drivers in a session |
-
-**Example:**
-```
-GET /telemetry/fastest-lap?year=2023&gp=Monza&driver=VER&session=Q
-```
-
-### Prediction
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/predict/race` | Predict race from qualifying grid |
-| POST | `/predict/train?years=2024,2025` | Train model in background |
-| GET | `/predict/status` | Check model status |
-
-**Example request body:**
-```json
-{
-  "year": 2026,
-  "grand_prix": "Silverstone",
-  "qualifying_results": [
-    { "driver": "RUS", "team": "Mercedes", "grid": 1, "form_nudge": 0 },
-    { "driver": "ANT", "team": "Mercedes", "grid": 2, "form_nudge": 0 },
-    { "driver": "HAM", "team": "Ferrari",  "grid": 3, "form_nudge": 0 }
-  ]
-}
-```
+- **Frontend:** React 18, Vite, Recharts (Customized for dark-mode performance data)
+- **Backend:** Python 3.10+, FastAPI, Uvicorn
+- **Data/ML:** XGBoost, Scikit-Learn, Pandas, FastF1
+- **Styling:** CSS3 (Bebas Neue & IBM Plex Mono for a "pit wall" aesthetic)
 
 ---
 
-## Usage Guide
+## 🔧 Setup & Installation
 
-### Telemetry
-1. Enter **Year**, **Grand Prix** (e.g. `Monza`, `Monaco`, `Silverstone`), **Driver** (e.g. `VER`, `HAM`, `LEC`), **Session** (`Q`, `R`, `FP1`)
-2. Click **Load Lap** — first load takes 30-60s, subsequent loads instant from cache
-3. Toggle channels with the colored buttons
-4. Click **Load Stint** for lap time evolution
+### Backend
+1. `cd backend`
+2. `python -m venv venv`
+3. `source venv/bin/activate` (or `venv\Scripts\activate` on Windows)
+4. `pip install -r requirements.txt`
+5. `python main.py`
 
-### Driver Comparison
-1. Switch to **Compare Drivers** tab
-2. Enter two drivers and lap numbers
-3. Switch between Speed / Throttle / Brake / Gear / RPM channels
-
-### Race Predictor
-1. Set train years (e.g. `2024,2025,2026`) and click **Train Model**
-2. Click **Model Status** to check progress
-3. Edit the qualifying grid with current drivers and teams
-4. Use the **form nudge** (− / +) buttons to override the model's form estimate per driver
-5. Click **▶ Run Prediction**
+### Frontend
+1. `cd frontend`
+2. `npm install`
+3. `npm run dev`
 
 ---
 
-## ML Model Details
-
-- **Algorithm:** XGBoost Regressor
-- **Features:** grid position, recency-weighted form (exponential decay over last 10 races), team form, DNF rate, season progress, regulation era flag
-- **Sample weights:** 2026+ races weighted 5x to reflect current regulation order
-- **Known limitation:** Accuracy improves as more races from the current season are added. Retrain required periodically.
-
----
-
-## Credits
-
-- Telemetry and session data via **[FastF1](https://github.com/theOehrly/Fast-F1)** (MIT License)
-- ML via **XGBoost** and **scikit-learn**
-- Charts via **Recharts**
-- API via **FastAPI**
-
----
-
-## Known Limitations
-
-- FastF1 rate limits to ~500 API calls/hour — training on multiple years may require waiting between runs
-- DNFs caused by reliability temporarily skew a driver's form score downward
-- New drivers with no historical data fall back to grid position as their form estimate
-
----
-
-## Potential Improvements
-
-- [ ] Track map — color-coded speed visualization using X/Y telemetry coordinates
-- [ ] Sector times — purple/green/yellow mini-sector comparison
-- [ ] Tyre strategy predictor
-
+## Credits & License
+- Data provided by **FastF1** (MIT License).
+- Built for educational and portfolio purposes.

@@ -12,7 +12,7 @@ export default function App() {
         <div className="header-inner">
           <div className="logo">
             <span className="logo-flag">🏁</span>
-            <span className="logo-text">F1<span className="logo-accent">LAB</span></span>
+            <span className="logo-text">GP<span className="logo-accent">LAB</span></span>
           </div>
           <nav className="nav">
             <button

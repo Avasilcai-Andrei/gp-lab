@@ -116,10 +116,6 @@ def get_circuit_features(grand_prix: str) -> dict:
 # ─── Data Collection ─────────────────────────────────────────────────────────
 
 def collect_training_data(years: list[int]) -> pd.DataFrame:
-    """
-    Collect historical race results from FastF1.
-    Loads only results (no telemetry/laps) to stay within rate limits.
-    """
     records = []
     for year in years:
         schedule = fastf1.get_event_schedule(year, include_testing=False)
@@ -127,32 +123,25 @@ def collect_training_data(years: list[int]) -> pd.DataFrame:
             try:
                 race = fastf1.get_session(year, event["EventName"], "R")
                 race.load(telemetry=False, weather=False, messages=False, laps=False)
-
-                quali = fastf1.get_session(year, event["EventName"], "Q")
-                quali.load(telemetry=False, weather=False, messages=False, laps=False)
-
-                race_results = race.results
-                quali_results = quali.results
+                
+                # Use actual Race Results for Ground Truth and Starting Grid
+                results = race.results
                 gp_name = event["EventName"]
 
-                for _, row in race_results.iterrows():
-                    driver = row["Abbreviation"]
-                    q_row = quali_results[quali_results["Abbreviation"] == driver]
-                    grid_pos = int(q_row["Position"].values[0]) if len(q_row) > 0 else 20
-
+                for _, row in results.iterrows():
                     records.append({
                         "year": year,
                         "round": int(event.get("RoundNumber", 0)),
                         "grand_prix": gp_name,
-                        "driver": driver,
+                        "driver": row["Abbreviation"],
                         "team": row.get("TeamName", "Unknown"),
-                        "grid_position": grid_pos,
+                        "grid_position": int(row["GridPosition"]), # Corrected: Real starting position
                         "finish_position": int(row["Position"]) if pd.notna(row["Position"]) else 20,
                         "points": float(row["Points"]) if pd.notna(row["Points"]) else 0,
                         "status": row.get("Status", "Finished"),
                     })
             except Exception as e:
-                print(f"Skipping {year} {event['EventName']}: {e}")
+                print(f"Fetch error {year} {event['EventName']}: {str(e)[:50]}")
                 continue
     return pd.DataFrame(records)
 
@@ -162,41 +151,57 @@ def collect_training_data(years: list[int]) -> pd.DataFrame:
 REG_CHANGE_YEARS = {2022, 2026}
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    # Sort for time-series operations
     df = df.sort_values(["driver", "year", "round"]).copy()
 
     df["new_era"] = df["year"].apply(lambda y: 1 if y in REG_CHANGE_YEARS else 0)
     df["dnf"] = (~df["status"].str.contains("Finished|Lapped", na=False)).astype(int)
 
+    # Driver Form (Rolling 3-race window)
     df["form_3"] = (
         df.groupby("driver")["finish_position"]
         .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
     )
+    
+    # Points Form (The missing key!)
     df["points_form_3"] = (
         df.groupby("driver")["points"]
         .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
     )
+    
+    # Team Performance Baseline
     df["team_form_3"] = (
         df.groupby("team")["finish_position"]
         .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
     )
+
+    # Reliability Metric
     df["dnf_rate"] = (
         df.groupby("driver")["dnf"]
         .transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
     )
+
+    # Normalized Season Progress
     df["season_progress"] = (
         df["round"] / df.groupby("year")["round"].transform("max")
     )
+
+    # Historical Performance at specific Venue
     df["circuit_affinity"] = (
         df.groupby(["driver", "grand_prix"])["finish_position"]
         .transform(lambda x: x.shift(1).expanding().mean())
     )
-    df["circuit_affinity"] = df["circuit_affinity"].fillna(df["form_3"])
     
-    df["circuit_affinity"] = df["circuit_affinity"].fillna(df["form_3"])
+    # Fill missing values using hierarchical fallbacks
+    df["points_form_3"] = df["points_form_3"].fillna(0.0)
+    df["circuit_affinity"] = df["circuit_affinity"].fillna(df["form_3"]).fillna(df["team_form_3"])
+    df["form_3"] = df["form_3"].fillna(df["team_form_3"])
 
+    # Map Static Circuit Metadata
     for col in ["street", "overtaking", "power_dep", "downforce_dep", "tire_deg"]:
         df[col] = df["grand_prix"].apply(lambda gp: get_circuit_features(gp)[col])
 
+    # Drop any rows where we still don't have essential data
     return df.dropna(subset=["form_3", "grid_position"])
 
 
@@ -261,10 +266,6 @@ def load_model():
 # ─── Prediction ───────────────────────────────────────────────────────────────
 
 def predict_race(year: int, grand_prix: str, qualifying_results: list[dict]) -> list[dict]:
-    """
-    Predict race finishing order.
-    qualifying_results: list of dicts — driver, team, grid, form_nudge (optional)
-    """
     saved = load_model()
     circuit = get_circuit_features(grand_prix)
 
@@ -273,11 +274,11 @@ def predict_race(year: int, grand_prix: str, qualifying_results: list[dict]) -> 
         total = sum(scores)
         return [round(s / total, 3) for s in scores]
 
-    # ── Fallback: no trained model ────────────────────────────────────────
+    # --- Baseline Prediction (No Model) ---
     if saved is None:
         results = []
         for entry in qualifying_results:
-            noise = np.random.normal(0, 1.5)
+            noise = np.random.normal(0, 1.2)
             pred_pos = max(1, min(20, entry["grid"] + noise))
             results.append({
                 "driver": entry["driver"],
@@ -286,7 +287,6 @@ def predict_race(year: int, grand_prix: str, qualifying_results: list[dict]) -> 
                 "predicted_position": round(pred_pos, 1),
                 "podium_probability": 0,
                 "points_probability": 0,
-                "form_rating": 10,
             })
         results = sorted(results, key=lambda x: x["predicted_position"])
         positions = [r["predicted_position"] for r in results]
@@ -297,58 +297,37 @@ def predict_race(year: int, grand_prix: str, qualifying_results: list[dict]) -> 
 
     model = saved["model"]
     features = saved["features"]
-    historical = saved["training_data"]
-    historical = historical.sort_values(["year", "round"]).copy()
+    historical = saved["training_data"].sort_values(["year", "round"])
 
-    def weighted_finish(driver_df: pd.DataFrame, n: int = 10):
-        """Recency-weighted avg finish, DNFs excluded."""
-        clean = driver_df[
-            driver_df["status"].str.contains("Finished|Lapped", na=False)
-        ].tail(n).copy()
-        if len(clean) == 0:
-            return None
-        w = np.exp(0.4 * np.arange(len(clean)))
-        w /= w.sum()
-        return float(np.average(clean["finish_position"].values, weights=w))
-
-    def weighted_points(driver_df: pd.DataFrame, n: int = 10):
-        recent = driver_df.tail(n).copy()
-        if len(recent) == 0:
-            return None
-        w = np.exp(0.4 * np.arange(len(recent)))
-        w /= w.sum()
-        return float(np.average(recent["points"].values, weights=w))
-
-    def get_circuit_affinity(driver_df: pd.DataFrame, gp: str):
-        """Driver's historical avg finish at this specific circuit."""
-        at_circuit = driver_df[driver_df["grand_prix"] == gp]
-        if len(at_circuit) == 0:
-            return None
-        return float(at_circuit["finish_position"].mean())
+    def get_weighted_stat(df: pd.DataFrame, column: str, n: int = 10):
+        if len(df) == 0: return None
+        data = df.tail(n).copy()
+        weights = np.exp(0.4 * np.arange(len(data)))
+        return float(np.average(data[column].values, weights=weights))
 
     results = []
     for entry in qualifying_results:
-        driver = entry["driver"]
-        team = entry["team"]
-        grid = entry["grid"]
-        form_nudge = float(entry.get("form_nudge", 0))
+        driver_hist = historical[historical["driver"] == entry["driver"]]
+        team_hist = historical[historical["team"] == entry["team"]]
 
-        driver_hist = historical[historical["driver"] == driver]
-        team_hist = historical[historical["team"] == team]
-
-        form = weighted_finish(driver_hist) or float(grid)
-        points_form = weighted_points(driver_hist) or 0.0
-        team_form = weighted_finish(team_hist) or float(grid)
+        # Feature Extraction with Fallbacks
+        form = get_weighted_stat(driver_hist, "finish_position")
+        points_form = get_weighted_stat(driver_hist, "points") or 0.0
+        team_form = get_weighted_stat(team_hist, "finish_position") or 10.0
+        
+        # Rookie logic: use team form if driver form is missing
+        form = form if form is not None else team_form
         dnf_rate = float(driver_hist["dnf"].mean()) if len(driver_hist) > 0 else 0.1
-        raw_affinity = get_circuit_affinity(driver_hist, grand_prix)
-        affinity_races = len(driver_hist[driver_hist["grand_prix"] == grand_prix])
-        if raw_affinity is not None and affinity_races >= 3:
-            affinity = raw_affinity * 0.5 + form * 0.5
+        
+        # Circuit Affinity
+        at_circuit = driver_hist[driver_hist["grand_prix"] == grand_prix]
+        if len(at_circuit) >= 3:
+            affinity = (at_circuit["finish_position"].mean() * 0.5) + (form * 0.5)
         else:
             affinity = form
 
         feature_row = pd.DataFrame([{
-            "grid_position": grid,
+            "grid_position": entry["grid"],
             "form_3": form,
             "points_form_3": points_form,
             "team_form_3": team_form,
@@ -363,41 +342,28 @@ def predict_race(year: int, grand_prix: str, qualifying_results: list[dict]) -> 
             "tire_deg": circuit["tire_deg"],
         }])
 
-        # Only use features the model was trained on (safe for old saved models)
+        # Inference
         available = [f for f in features if f in feature_row.columns]
         pred_pos = float(model.predict(feature_row[available])[0])
 
-        # Form nudge: each +1 = ~1.5 positions better
-        pred_pos -= form_nudge * 1.5
-
-        # Street circuit anchor: on street circuits grid position sticks more
-        # because overtaking is nearly impossible
-        street_pull = circuit["street"] * 0.25
-        pred_pos = pred_pos * (1 - street_pull) + grid * street_pull
-
-        pred_pos = max(1.0, min(20.0, pred_pos))
-
+        # Manual adjustments for specific track types
+        street_pull = circuit["street"] * 0.3
+        pred_pos = (pred_pos * (1 - street_pull)) + (entry["grid"] * street_pull)
+        
         results.append({
-            "driver": driver,
-            "team": team,
-            "grid_position": grid,
-            "predicted_position": round(pred_pos, 2),
-            "podium_probability": 0,
-            "points_probability": 0,
-            "form_rating": round(21 - form, 1),
+            "driver": entry["driver"],
+            "team": entry["team"],
+            "grid_position": entry["grid"],
+            "predicted_position": round(max(1.0, min(20.0, pred_pos)), 2),
         })
 
+    # Sort and Calculate Probabilities
     results = sorted(results, key=lambda x: x["predicted_position"])
     positions = [r["predicted_position"] for r in results]
-
-    # On low-overtaking circuits (Monaco) probabilities cluster at the top
-    # On high-overtaking circuits (Monza) they spread out more
-    overtaking = circuit["overtaking"]
-    podium_decay = 0.45 + (1 - overtaking) * 0.3
-    points_decay = 0.22 + (1 - overtaking) * 0.1
-
-    podium_probs = soft_probabilities(positions, podium_decay)
-    points_probs = soft_probabilities(positions, points_decay)
+    
+    ot = circuit["overtaking"]
+    podium_probs = soft_probabilities(positions, 0.45 + (1 - ot) * 0.3)
+    points_probs = soft_probabilities(positions, 0.22 + (1 - ot) * 0.1)
 
     for i, r in enumerate(results):
         r["podium_probability"] = podium_probs[i]

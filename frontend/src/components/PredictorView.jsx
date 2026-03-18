@@ -20,14 +20,14 @@ const TEAM_COLORS = {
 };
 
 const DRIVER_PRESET = [
-  { driver: "VER", team: "Red Bull Racing", grid: 1 },
-  { driver: "PER", team: "Red Bull Racing", grid: 2 },
-  { driver: "HAM", team: "Mercedes", grid: 3 },
-  { driver: "RUS", team: "Mercedes", grid: 4 },
-  { driver: "LEC", team: "Ferrari", grid: 5 },
-  { driver: "SAI", team: "Ferrari", grid: 6 },
-  { driver: "NOR", team: "McLaren", grid: 7 },
-  { driver: "PIA", team: "McLaren", grid: 8 },
+  { driver: "VER", team: "Red Bull Racing", grid: 7 },
+  { driver: "HAD", team: "Red Bull Racing", grid: 8 },
+  { driver: "ANT", team: "Mercedes", grid: 2 },
+  { driver: "RUS", team: "Mercedes", grid: 1 },
+  { driver: "LEC", team: "Ferrari", grid: 3 },
+  { driver: "HAM", team: "Ferrari", grid: 4 },
+  { driver: "NOR", team: "McLaren", grid: 5 },
+  { driver: "PIA", team: "McLaren", grid: 6 },
   { driver: "ALO", team: "Aston Martin", grid: 9 },
   { driver: "STR", team: "Aston Martin", grid: 10 },
 ];
@@ -51,7 +51,7 @@ function ProbBar({ value, color = "#00d2be" }) {
 }
 
 export default function PredictorView() {
-  const [year, setYear] = useState("2024");
+  const [year, setYear] = useState("2026");
   const [gp, setGp] = useState("Monza");
   const [grid, setGrid] = useState(DRIVER_PRESET);
   const [results, setResults] = useState(null);
@@ -59,7 +59,7 @@ export default function PredictorView() {
   const [error, setError] = useState("");
   const [modelStatus, setModelStatus] = useState(null);
   const [training, setTraining] = useState(false);
-  const [trainYears, setTrainYears] = useState("2022,2023");
+  const [trainYears, setTrainYears] = useState("2022,2023,2024,2025,2026");
 
   const updateDriver = (i, field, val) => {
     setGrid(g => g.map((d, idx) => idx === i ? { ...d, [field]: field === "grid" ? parseInt(val) || idx + 1 : val } : d));
@@ -151,7 +151,10 @@ export default function PredictorView() {
         <div className="card">
           <div className="card-title">Qualifying Grid</div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-            {grid.map((entry, i) => (
+            {grid
+              .slice()
+              .sort((a, b) => a.grid - b.grid)
+              .map((entry, i) => (
               <div key={i} style={{
                 display: "flex", gap: "0.5rem", alignItems: "center",
                 padding: "0.4rem 0.5rem", borderRadius: 2,
