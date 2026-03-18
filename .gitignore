@@ -1,0 +1,7 @@
+backend/venv/
+backend/f1_cache/
+backend/models/
+__pycache__/
+*.pkl
+frontend/node_modules/
+frontend/dist/
