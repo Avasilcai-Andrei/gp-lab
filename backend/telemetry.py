@@ -143,6 +143,100 @@ def get_session_drivers(year: int, grand_prix: str, session_type: str):
     return results
 
 
+def _field_from_results(results, order_col: str):
+    """Build [{driver, team}] from a results frame, ordered by order_col
+    (a position column). Grid/finish positions of 0 or NaN sort to the back."""
+    df = results.copy()
+    df["_order"] = df[order_col].apply(lambda v: v if pd.notna(v) and v > 0 else 99)
+    df = df.sort_values("_order")
+    field = []
+    for _, row in df.iterrows():
+        abbr = row.get("Abbreviation")
+        if abbr is None or pd.isna(abbr):
+            continue
+        field.append({
+            "driver": str(abbr),
+            "team": str(row.get("TeamName") or "Unknown"),
+        })
+    return field
+
+
+def _load_race_results(year: int, event_name: str):
+    """Race results frame for an event, or None if unavailable/not yet run."""
+    session = fastf1.get_session(year, event_name, "R")
+    session.load(laps=False, telemetry=False, weather=False, messages=False)
+    res = session.results
+    if res is None or len(res) == 0:
+        return None
+    return res
+
+
+def get_default_grid(year: int, grand_prix: str):
+    """Full field as [{driver, team}] in a sensible default order.
+
+    Resolution order:
+      1. Actual starting grid for that race (ordered by GridPosition).
+      2. Most recent completed race that season (ordered by finishing order).
+      3. Season entry list (any session's results for the target/first event).
+    Field size is whatever the entry list contains (do not assume 20).
+    """
+    from predictor import match_circuit_key  # reuse circuit alias matching
+    schedule = fastf1.get_event_schedule(year, include_testing=False)
+
+    # Resolve the requested event (FastF1 fuzzy match, alias key as fallback).
+    target = None
+    for candidate in [grand_prix, match_circuit_key(grand_prix)]:
+        if not candidate:
+            continue
+        try:
+            target = fastf1.get_event(year, candidate)
+            break
+        except Exception:
+            continue
+
+    # 1. Actual starting grid for the requested race.
+    if target is not None:
+        try:
+            res = _load_race_results(year, target["EventName"])
+            if res is not None:
+                field = _field_from_results(res, "GridPosition")
+                if field:
+                    return field
+        except Exception:
+            pass
+
+    # 2. Most recent completed race this season.
+    past = schedule
+    if "EventDate" in schedule.columns:
+        past = schedule[schedule["EventDate"] <= pd.Timestamp.now()]
+    for _, ev in past.sort_values("RoundNumber", ascending=False).iterrows():
+        try:
+            res = _load_race_results(year, ev["EventName"])
+            if res is not None:
+                field = _field_from_results(res, "Position")
+                if field:
+                    return field
+        except Exception:
+            continue
+
+    # 3. Season entry list — drivers/teams from any session of the target event.
+    ev = target if target is not None else (schedule.iloc[0] if len(schedule) else None)
+    if ev is not None:
+        for stype in ["R", "Q", "FP1"]:
+            try:
+                session = fastf1.get_session(year, ev["EventName"], stype)
+                session.load(laps=False, telemetry=False, weather=False, messages=False)
+                res = session.results
+                if res is not None and len(res):
+                    field = _field_from_results(res, "GridPosition")
+                    if field:
+                        return field
+            except Exception:
+                continue
+
+    raise ValueError(f"No grid or entry-list data available for {year} {grand_prix}")
+
+
 def get_lap_times(year: int, grand_prix: str, session_type: str, driver: str):
     """Return all lap times for a driver in a session."""
     session = get_session(year, grand_prix, session_type)

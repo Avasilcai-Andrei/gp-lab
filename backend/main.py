@@ -10,6 +10,7 @@ from telemetry import (
     compare_laps,
     get_session_drivers,
     get_lap_times,
+    get_default_grid,
 )
 from predictor import predict_race, train_model, get_model_status
 
@@ -117,6 +118,18 @@ def trigger_training(background_tasks: BackgroundTasks, years: str = "2022,2023"
 def model_status():
     """Get current model training status and metadata."""
     return get_model_status()
+
+
+@app.get("/predict/grid/{year}/{grand_prix}")
+def default_grid(year: int, grand_prix: str):
+    """Full default grid for a race as [{driver, team}], sourced from FastF1.
+
+    Falls back from the actual starting grid -> most recent completed race ->
+    season entry list. Field size varies by season (do not assume 20)."""
+    try:
+        return get_default_grid(year, grand_prix)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ─── Health Check ─────────────────────────────────────────────────────────────

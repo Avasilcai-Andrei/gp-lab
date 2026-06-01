@@ -1,8 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell
 } from "recharts";
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors
+} from "@dnd-kit/core";
+import {
+  SortableContext, arrayMove, verticalListSortingStrategy, useSortable
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const API = "http://localhost:8000";
 
@@ -14,27 +21,70 @@ const TEAM_COLORS = {
   "Aston Martin": "#358C75",
   "Alpine": "#FF87BC",
   "Williams": "#64C4FF",
+  "Racing Bulls": "#6692FF",
+  "RB": "#6692FF",
+  "Kick Sauber": "#52E252",
+  "Audi": "#BB0A30",
+  "Cadillac": "#B6862C",
+  "Haas F1 Team": "#B6BABD",
+  // legacy names kept for older seasons
   "AlphaTauri": "#5E8FAA",
   "Alfa Romeo": "#C92D4B",
-  "Haas F1 Team": "#B6BABD",
 };
 
+// Offline fallback only — the grid is normally loaded from /predict/grid.
 const DRIVER_PRESET = [
-  { driver: "VER", team: "Red Bull Racing", grid: 7 },
-  { driver: "HAD", team: "Red Bull Racing", grid: 8 },
-  { driver: "ANT", team: "Mercedes", grid: 2 },
-  { driver: "RUS", team: "Mercedes", grid: 1 },
-  { driver: "LEC", team: "Ferrari", grid: 3 },
-  { driver: "HAM", team: "Ferrari", grid: 4 },
-  { driver: "NOR", team: "McLaren", grid: 5 },
-  { driver: "PIA", team: "McLaren", grid: 6 },
-  { driver: "ALO", team: "Aston Martin", grid: 9 },
-  { driver: "STR", team: "Aston Martin", grid: 10 },
+  { driver: "RUS", team: "Mercedes" },
+  { driver: "ANT", team: "Mercedes" },
+  { driver: "LEC", team: "Ferrari" },
+  { driver: "HAM", team: "Ferrari" },
+  { driver: "NOR", team: "McLaren" },
+  { driver: "PIA", team: "McLaren" },
+  { driver: "VER", team: "Red Bull Racing" },
+  { driver: "HAD", team: "Red Bull Racing" },
+  { driver: "ALO", team: "Aston Martin" },
+  { driver: "STR", team: "Aston Martin" },
 ];
+
+let _uid = 0;
+const makeId = () => `g${_uid++}`;
+// Array order is the single source of truth; numeric grid is derived from index.
+const withIds = (list) => list.map((e) => ({ id: makeId(), driver: e.driver, team: e.team }));
 
 function PosBadge({ pos }) {
   const cls = pos === 1 ? "pos-1" : pos === 2 ? "pos-2" : pos === 3 ? "pos-3" : "pos-other";
   return <span className={`pos-badge ${cls}`}>{pos}</span>;
+}
+
+function SortableRow({ entry, pos, onRemove }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: entry.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    display: "flex", gap: "0.5rem", alignItems: "center",
+    padding: "0.45rem 0.5rem", borderRadius: 2,
+    background: isDragging ? "#1c1c1c" : (pos % 2 === 1 ? "#141414" : "transparent"),
+    boxShadow: isDragging ? "0 6px 18px rgba(0,0,0,0.55)" : "none",
+    border: `1px solid ${isDragging ? "#e8002d" : "transparent"}`,
+    cursor: "grab", userSelect: "none",
+    position: "relative", zIndex: isDragging ? 20 : "auto",
+  };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <span style={{ color: "#444", fontSize: "0.85rem", width: "14px", textAlign: "center" }}>⠿</span>
+      <span style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: "1.1rem", color: "#444", width: "22px", textAlign: "center" }}>{pos}</span>
+      <span style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: "1.05rem", letterSpacing: "0.05em", width: "50px" }}>{entry.driver}</span>
+      <span style={{ flex: 1, fontFamily: "IBM Plex Mono, monospace", fontSize: "0.75rem", color: "#bbb" }}>{entry.team}</span>
+      <div style={{ width: 10, height: 10, borderRadius: "50%", background: TEAM_COLORS[entry.team] || "#444", flexShrink: 0 }} />
+      <button
+        onClick={(e) => { e.stopPropagation(); onRemove(entry.id); }}
+        onPointerDown={(e) => e.stopPropagation()}
+        title="Remove"
+        style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: "1rem", lineHeight: 1, padding: "0 0.25rem" }}
+      >×</button>
+    </div>
+  );
 }
 
 function ProbBar({ value, color = "#00d2be" }) {
@@ -53,7 +103,8 @@ function ProbBar({ value, color = "#00d2be" }) {
 export default function PredictorView() {
   const [year, setYear] = useState("2026");
   const [gp, setGp] = useState("Monza");
-  const [grid, setGrid] = useState(DRIVER_PRESET);
+  const [grid, setGrid] = useState(() => withIds(DRIVER_PRESET));
+  const [gridLoading, setGridLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -61,9 +112,51 @@ export default function PredictorView() {
   const [training, setTraining] = useState(false);
   const [trainYears, setTrainYears] = useState("2022,2023,2024,2025,2026");
 
-  const updateDriver = (entryToUpdate, field, val) => {
-    setGrid(g => g.map(d => d === entryToUpdate ? { ...d, [field]: field === "grid" ? parseInt(val) || d.grid : val } : d));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
+
+  // Load the real grid on mount and whenever Season / Grand Prix change (debounced).
+  useEffect(() => {
+    if (!year || !gp) return;
+    const t = setTimeout(async () => {
+      setGridLoading(true);
+      try {
+        const res = await fetch(`${API}/predict/grid/${parseInt(year)}/${encodeURIComponent(gp)}`);
+        if (!res.ok) throw new Error("grid fetch failed");
+        const data = await res.json();
+        if (Array.isArray(data) && data.length) setGrid(withIds(data));
+        else throw new Error("empty grid");
+      } catch {
+        setGrid(withIds(DRIVER_PRESET)); // offline fallback
+      } finally {
+        setGridLoading(false);
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [year, gp]);
+
+  const onDragEnd = ({ active, over }) => {
+    if (over && active.id !== over.id) {
+      setGrid((items) => {
+        const oldI = items.findIndex((i) => i.id === active.id);
+        const newI = items.findIndex((i) => i.id === over.id);
+        return arrayMove(items, oldI, newI);
+      });
+    }
   };
+
+  const removeRow = (id) => setGrid((items) => items.filter((i) => i.id !== id));
+  const addRow = () => setGrid((items) => [...items, { id: makeId(), driver: "NEW", team: "Unknown" }]);
+
+  const randomizeGrid = () => setGrid((items) => {
+    const a = items.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  });
 
   const predict = async () => {
     setLoading(true); setError(""); setResults(null);
@@ -74,7 +167,8 @@ export default function PredictorView() {
         body: JSON.stringify({
           year: parseInt(year),
           grand_prix: gp,
-          qualifying_results: grid,
+          // Grid = current array order; payload shape stays [{driver, team, grid}].
+          qualifying_results: grid.map((e, i) => ({ driver: e.driver, team: e.team, grid: i + 1 })),
         }),
       });
       if (!res.ok) throw new Error((await res.json()).detail);
@@ -146,45 +240,39 @@ export default function PredictorView() {
 
       <div className="grid-2" style={{ gap: "1.5rem" }}>
         <div className="card">
-          <div className="card-title">Qualifying Grid</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-            {grid
-              .slice()
-              .sort((a, b) => a.grid - b.grid)
-              .map((entry, i) => (
-              <div key={i} style={{
-                display: "flex", gap: "0.5rem", alignItems: "center",
-                padding: "0.4rem 0.5rem", borderRadius: 2,
-                background: i % 2 === 0 ? "#141414" : "transparent",
-              }}>
-                <span style={{
-                  fontFamily: "Bebas Neue, sans-serif", fontSize: "1.1rem",
-                  color: "#444", width: "20px", textAlign: "center"
-                }}>{i + 1}</span>
-                <input
-                  className="control-input"
-                  style={{ width: "55px", padding: "0.3rem 0.5rem", fontSize: "0.8rem" }}
-                  value={entry.driver}
-                  onChange={e => updateDriver(entry, "driver", e.target.value)}
-                />
-                <input
-                  className="control-input"
-                  style={{ flex: 1, padding: "0.3rem 0.5rem", fontSize: "0.75rem" }}
-                  value={entry.team}
-                  onChange={e => updateDriver(entry, "team", e.target.value)}
-                />
-                <div style={{
-                  width: 10, height: 10, borderRadius: "50%",
-                  background: TEAM_COLORS[entry.team] || "#444",
-                  flexShrink: 0
-                }} />
-              </div>
-            ))}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.6rem" }}>
+            <div className="card-title" style={{ marginBottom: 0 }}>
+              Qualifying Grid
+              {gridLoading && (
+                <span style={{ marginLeft: "0.5rem", fontFamily: "IBM Plex Mono, monospace", fontSize: "0.65rem", color: "#666" }}>
+                  loading…
+                </span>
+              )}
+            </div>
+            <button
+              className="btn btn-outline"
+              style={{ fontSize: "0.65rem", padding: "0.3rem 0.6rem" }}
+              onClick={randomizeGrid}
+            >
+              ⤮ Randomize
+            </button>
           </div>
+          <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: "0.65rem", color: "#555", marginBottom: "0.5rem" }}>
+            drag to reorder · position sets the starting grid
+          </div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={grid.map((e) => e.id)} strategy={verticalListSortingStrategy}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                {grid.map((entry, i) => (
+                  <SortableRow key={entry.id} entry={entry} pos={i + 1} onRemove={removeRow} />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
           <button
             className="btn btn-outline"
             style={{ marginTop: "0.75rem", width: "100%", fontSize: "0.7rem" }}
-            onClick={() => setGrid(g => [...g, { driver: "NEW", team: "Unknown", grid: g.length + 1 }])}
+            onClick={addRow}
           >
             + Add Driver
           </button>
